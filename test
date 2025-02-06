@@ -1,0 +1,38 @@
+#!/usr/bin/env php
+<?php
+/**
+ * @license MIT
+ * Copyright 2022 Dustin Wilson, et al.
+ * See LICENSE and AUTHORS files for details
+ */
+
+$dir = ini_get('extension_dir');
+$php = escapeshellarg(\PHP_BINARY);
+$code = escapeshellarg(__DIR__ . '/lib');
+
+
+array_shift($argv);
+foreach ($argv as $k => $v) {
+    if (in_array($v, ['--coverage', '--coverage-html'])) {
+        $argv[$k] = '--coverage-html tests/coverage';
+    }
+}
+
+$cmd = [
+    $php,
+    '-d opcache.enable_cli=0',
+];
+
+if (!extension_loaded('pcov')) {
+    $cmd[] = '-d extension=pcov.so';
+}
+
+$cmd = implode(' ', [
+    ...$cmd,
+    '-d pcov.enabled=1',
+    "-d pcov.directory=$code",
+    escapeshellarg(__DIR__ . '/vendor/bin/phpunit'),
+    '--configuration tests/phpunit.xml',
+    ...$argv
+]);
+passthru($cmd);
