@@ -1,0 +1,32 @@
+{
+    "name": "mensbeam/http-client",
+    "type": "library",
+    "license": "MIT",
+    "version": "1.0.0",
+    "authors": [
+        {
+            "name": "Dustin Wilson",
+            "email": "dustin@dustinwilson.com"
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "MensBeam\\": "lib/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "MensBeam\\HTTPClient\\Test\\": "tests/lib/"
+        }
+    },
+    "require": {
+        "php": ">=8.0",
+        "guzzlehttp/guzzle": "^7.9",
+        "psr/log": "^3.0"
+    },
+    "require-dev": {
+        "ext-pcov": "*",
+        "phake/phake": "^4.5",
+        "phpunit/phpunit": "^11.5"
+    }
+}
