@@ -133,6 +133,8 @@ class Client implements ClientInterface, GuzzleClientInterface {
      * @see https://docs.guzzlephp.org/en/stable/quickstart.html#creating-a-client for documentation on Guzzle's Client configuration options
      */
     public function __construct(array $config = []) {
+        $this->configOriginal = $config;
+
         $dryRun = $this->validateDryRunOption($config['dry_run'] ?? null);
         if ($dryRun instanceof \Throwable) {
             throw $dryRun;
