@@ -42,7 +42,7 @@ class Client {
 }
 ```
 
-### HTTP-Client::__construct
+### Client::__construct
 #### Description
 ```php
 public function Client::__construct(array $config = [])
@@ -53,7 +53,7 @@ Returns new _HTTP-Client_ object.
 #### Parameters
 **config** - An array of configuration options
 
-### HTTP-Client::request
+### Client::request
 #### Description
 ```php
 public function Client::request(string $method, string|Psr\Http\Message\UriInterface $uri = '', array $options = []): Psr\Http\Message\ResponseInterface
@@ -66,7 +66,7 @@ Creates and sends an HTTP request with built-in retry logic defaults.
 **uri** - URI object or string
 **options** - Request options to apply
 
-### HTTP-Client::send
+### Client::send
 #### Description
 ```php
 public function Client::send(Psr\Http\Message\RequestInterface $request, array $options = []): Psr\Http\Message\ResponseInterface;
