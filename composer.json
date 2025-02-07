@@ -11,18 +11,20 @@
     ],
     "autoload": {
         "psr-4": {
-            "MensBeam\\": "lib/"
+            "MensBeam\\HTTP\\": "lib/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "MensBeam\\HTTPClient\\Test\\": "tests/lib/"
+            "MensBeam\\HTTP\\Test\\": "tests/lib/"
         }
     },
     "require": {
         "php": ">=8.0",
+        "ext-curl": "*",
         "guzzlehttp/guzzle": "^7.9",
-        "psr/log": "^3.0"
+        "psr/log": "^3.0",
+        "psr/http-client": "^1.0"
     },
     "require-dev": {
         "ext-pcov": "*",

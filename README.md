@@ -1,11 +1,12 @@
-# HTTPClient
+# HTTP-Client
 
 [a]: https://docs.guzzlephp.org/en/stable/quickstart.html#creating-a-client
 [b]: https://docs.guzzlephp.org/en/stable/request-options.html
 [c]: https://github.com/guzzle/guzzle/issues/1722
+[d]: https://www.php-fig.org/psr/psr-18/
 
 ## Overview
-The `HTTPClient` class is a wrapper around Guzzle's `\GuzzleHttp\Client`, providing enhanced default settings with customizable retry logic. It ensures that cURL is used for all requests and offers built-in error-handling mechanisms to improve debugging and resilience.
+_HTTP-Client_ is a [PSR-18][d]-compatible and `\GuzzleHttp\ClientInterface`-compatible wrapper around Guzzle's `\GuzzleHttp\Client`, providing enhanced default settings with customizable retry logic. It ensures that cURL is used for all requests and offers built-in error-handling mechanisms to improve debugging and resilience.
 
 Guzzle's built-in retry mechanism is powerful but often overly complex. In practical scenarios, retrying requests is a common need and shouldn't require excessive boilerplate. This class aims to rectify that.
 
@@ -19,41 +20,43 @@ Guzzle's built-in retry mechanism is powerful but often overly complex. In pract
 
 ## Installation
 ```bash
-composer require mensbeam/httpclient
+composer require mensbeam/http-client
 ```
 
 ## Class Synopsis
 
-**Note**: This class does not include the asynchronous methods from `\GuzzleHttp\Client`. While Guzzle internally relies on promises, they introduce unnecessary complexity without providing any real multitasking capabilities. Since PHP only introduced cooperative multitasking with Fibers in PHP 8.1 — and Guzzle does not utilize them — its promise-based implementation offers no actual performance benefits. Instead, it adds misleading abstraction without true async behavior. To maintain clarity and to avoid exposing methods that misrepresent their functionality, we have opted not to include Guzzle's async methods in this class.
+**Note**: This does not document the async methods (`Client::requestAsync` and `Client::sendAsync`). While Guzzle internally relies on promises, they introduce unnecessary complexity without providing any real multitasking capabilities. Since PHP only introduced cooperative multitasking with Fibers in PHP 8.1 — and Guzzle does not utilize them — its promise-based implementation offers no actual performance benefits. Instead, it adds misleading abstraction without true async behavior. We have implemented these methods to maintain compatibility with `\GuzzleHttp\ClientInterface` so this class may be used in place of `\GuzzleHttp\Client` in Guzzle's other classes if need arises, but we do not support them and suggest not using them.
 
 ```php
-class HTTPClient {
+namespace MensBeam\HTTP;
+
+class Client {
     public const REQUEST_STOP = 0;
     public const REQUEST_RETRY = 1;
     public const REQUEST_CONTINUE = 2;
 
     public function __construct(array $config = []);
 
-    public function request(string $method, string|Psr\Http\Message\UriInterface $uri, array $options = []): Psr\Http\Message\ResponseInterface;
+    public function request(string $method, string|Psr\Http\Message\UriInterface $uri = '', array $options = []): Psr\Http\Message\ResponseInterface;
     public function send(Psr\Http\Message\RequestInterface $request, array $options = []): Psr\Http\Message\ResponseInterface;
 }
 ```
 
-### HTTPClient::__construct
+### HTTP-Client::__construct
 #### Description
 ```php
-public function HTTPClient::__construct(array $config = [])
+public function Client::__construct(array $config = [])
 ```
 
-Returns new `HTTPClient` object.
+Returns new _HTTP-Client_ object.
 
 #### Parameters
 **config** - An array of configuration options
 
-### HTTPClient::request
+### HTTP-Client::request
 #### Description
 ```php
-public function HTTPClient::request(string $method, string|Psr\Http\Message\UriInterface $uri, array $options = []): Psr\Http\Message\ResponseInterface
+public function Client::request(string $method, string|Psr\Http\Message\UriInterface $uri = '', array $options = []): Psr\Http\Message\ResponseInterface
 ```
 
 Creates and sends an HTTP request with built-in retry logic defaults.
@@ -63,10 +66,10 @@ Creates and sends an HTTP request with built-in retry logic defaults.
 **uri** - URI object or string
 **options** - Request options to apply
 
-### HTTPClient::send
+### HTTP-Client::send
 #### Description
 ```php
-public function HTTPClient::send(Psr\Http\Message\RequestInterface $request, array $options = []): Psr\Http\Message\ResponseInterface;
+public function Client::send(Psr\Http\Message\RequestInterface $request, array $options = []): Psr\Http\Message\ResponseInterface;
 ```
 
 Sends a supplied HTTP request with built-in retry logic defaults.
@@ -78,16 +81,16 @@ Sends a supplied HTTP request with built-in retry logic defaults.
 ## Usage
 ### Basic Example
 ```php
-use MensBeam\HTTPClient;
+use MensBeam\HTTP\Client;
 
-$client = new HTTPClient();
+$client = new Client();
 $response = $client->request('GET', 'https://api.example.com/data');
 echo (string)$response->getBody();
 ```
 
 ### Custom Retry Logic
 ```php
-use MensBeam\HTTPClient;
+use MensBeam\HTTP\Client;
 
 $callback = function (
     int $retries,
@@ -97,48 +100,48 @@ $callback = function (
     ?int &$dynamicDelay = null
 ): int {
     if ($response && $response->getStatusCode() === 400) {
-        return HTTPClient::REQUEST_RETRY;
+        return Client::REQUEST_RETRY;
     }
-    return HTTPClient::REQUEST_CONTINUE;
+    return Client::REQUEST_CONTINUE;
 };
 
-$client = new HTTPClient([ 'on_retry' => $callback ]);
+$client = new Client([ 'on_retry' => $callback ]);
 ```
 
 ### Using a Logger
 ```php
 use MensBeam\{
-    HTTPClient,
+    HTTP\Client,
     Logger,
     Logger\StreamHandler
 };
 
 $logger = new Logger('http_logger', new StreamHandler('php://stdout', range(0, 7)));
-$client = new HTTPClient(['logger' => $logger]);
+$client = new Client(['logger' => $logger]);
 $response = $client->request('GET', 'https://api.example.com/data');
 ```
 
 ### Mocking Responses for Testing
 ```php
-use MensBeam\HTTPClient,
+use MensBeam\HTTP\Client,
     GuzzleHttp\Psr7\Response;
 
 $mockResponse = new Response(200, [], 'Mock response data');
-$client = new HTTPClient(['dry_run' => $mockResponse]);
+$client = new Client(['dry_run' => $mockResponse]);
 $response = $client->request('GET', 'https://api.example.com/data');
 echo (string)$response->getBody();
 ```
 
 ### Adding a middleware to the stack
 ```php
-use MensBeam\HTTPClient;
+use MensBeam\HTTP\Client;
 use GuzzleHttp\Middleware;
 
 $tapMiddleware = Middleware::tap(function (RequestInterface $request) {
     echo 'Sending request to: ' . $request->getUri() . PHP_EOL;
 });
 
-$client = new HTTPClient([ 'middleware' => $tapMiddleware ]);
+$client = new Client([ 'middleware' => $tapMiddleware ]);
 $response = $client->request('GET', 'https://api.example.com/data');
 echo (string)$response->getBody();
 ```
@@ -152,7 +155,7 @@ echo (string)$response->getBody();
 | `middleware`  | `array\|Closure`                                   | `null`  | Middleware stack configuration  |
 | `on_retry`    | `?callable`                                        | `null`  | Custom retry logic callback     |
 
-Configuration may be applied both in the constructor and in `HTTPClient::request` and `HTTPClient::send`. All configuration on the request overrides any configuration on the class but only for that request. `HTTPClient` will also accept the remaining Guzzle [Client configuration][a] and [request options][b].
+Configuration may be applied both in the constructor and in `Client::request` and `Client::send`. All configuration on the request overrides any configuration on the class but only for that request. _HTTP-Client_ will also accept the remaining Guzzle [Client configuration][a] and [request options][b].
 
 ## License
 This project is licensed under the MIT License. See the `LICENSE` file for details.

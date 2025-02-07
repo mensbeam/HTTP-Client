@@ -6,22 +6,25 @@
  */
 
 declare(strict_types=1);
-namespace MensBeam;
+namespace MensBeam\HTTP;
 
 use GuzzleHttp\{
     BodySummarizer,
-    Client,
+    Client as GuzzleClient,
+    ClientInterface as GuzzleClientInterface,
     Exception\RequestException,
     Handler\CurlHandler,
     Handler\MockHandler,
     HandlerStack,
     Middleware,
+    Promise\PromiseInterface,
     Psr7\Response
 };
-use Psr\Http\Message\{
-    RequestInterface,
-    ResponseInterface,
-    UriInterface
+use Psr\Http\{
+    Client\ClientInterface,
+    Message\RequestInterface,
+    Message\ResponseInterface,
+    Message\UriInterface
 };
 use Psr\Log\LoggerInterface;
 
@@ -62,7 +65,7 @@ use Psr\Log\LoggerInterface;
  * In addition, all of these may be overwritten by supplying a custom handler in
  * the configuration.
  */
-class HTTPClient {
+class Client implements ClientInterface, GuzzleClientInterface {
     /**
      * @var int Used in the retry_callable option to tell the retry handler to not
      * retry the request
@@ -81,6 +84,9 @@ class HTTPClient {
 
     /** @var array Configuration array */
     protected array $config = [];
+
+    /** @var array Configuration array originally passed to Client, unmodified */
+    protected array $configOriginal = [];
 
     /**
      * @var bool|ResponseInterface|array[ResponseInterface] Use a mock request
@@ -174,6 +180,14 @@ class HTTPClient {
 
 
 
+    // @codeCoverageIgnoreStart
+    public function getConfig(?string $option = null) {
+        return $option === null
+            ? $this->configOriginal
+            : ($this->configOriginal[$option] ?? null);
+    }
+    // @codeCoverageIgnoreEnd
+
     /**
      * Sends an HTTP request with built-in retry logic defaults.
      *
@@ -190,7 +204,7 @@ class HTTPClient {
      *     - middleware: array[\Closure]|\Closure|null Additional Guzzle middleware to use
      *     - on_retry: ?callable Callback for retry decision logic for this request
      *
-     * HTTPClient will also accept the remaining Guzzle Client configuration options
+     * HTTP-Client will also accept the remaining Guzzle Client configuration options
      * in the request options array to be applied per request
      *
      * @return ResponseInterface The HTTP response
@@ -201,7 +215,7 @@ class HTTPClient {
      * @see https://docs.guzzlephp.org/en/stable/quickstart.html#creating-a-client for documentation on Guzzle's Client configuration options
      * @see https://docs.guzzlephp.org/en/stable/request-options.html for documentation on Guzzle's request options
      */
-    public function request(string $method, string|UriInterface $uri, array $options = []): ResponseInterface {
+    public function request(string $method, $uri = '', array $options = []): ResponseInterface {
         $client = $this->getGuzzleClient($options);
         if ($client instanceof \Throwable) {
             throw $client;
@@ -209,6 +223,17 @@ class HTTPClient {
 
         return $client->request($method, $uri, $options);
     }
+
+    // @codeCoverageIgnoreStart
+    public function requestAsync(string $method, $uri = '', array $options = []): PromiseInterface {
+        $client = $this->getGuzzleClient($options);
+        if ($client instanceof \Throwable) {
+            throw $client;
+        }
+
+        return $client->requestAsync($method, $uri, $options);
+    }
+    // @codeCoverageIgnoreEnd
 
     /**
      * Send an HTTP request.
@@ -225,7 +250,7 @@ class HTTPClient {
      *     - middleware: array[\Closure]|\Closure|null Additional Guzzle middleware to use
      *     - on_retry: ?callable Callback for retry decision logic for this request
      *
-     * HTTPClient will also accept the remaining Guzzle Client configuration options
+     * HTTP-Client will also accept the remaining Guzzle Client configuration options
      * in the request options array to be applied per request
      *
      * @throws \InvalidArgumentException
@@ -240,8 +265,25 @@ class HTTPClient {
         return $client->send($request, $options);
     }
 
+    // @codeCoverageIgnoreStart
+    public function sendAsync(RequestInterface $request, array $options = []): PromiseInterface {
+        $client = $this->getGuzzleClient($options);
+        if ($client instanceof \Throwable) {
+            throw $client;
+        }
 
-    protected function getGuzzleClient(array &$options): Client|\Throwable {
+        return $client->sendAsync($request, $options);
+    }
+    // @codeCoverageIgnoreEnd
+
+    // @codeCoverageIgnoreStart
+    public function sendRequest(RequestInterface $request): ResponseInterface {
+        return $this->send($request);
+    }
+    // @codeCoverageIgnoreEnd
+
+
+    protected function getGuzzleClient(array &$options): GuzzleClient|\Throwable {
         $config = $this->config;
 
         $baseURI = $this->validateBaseURIOption($options['base_uri'] ?? null);
@@ -431,7 +473,7 @@ class HTTPClient {
 
         // Every request creates a new client because in Guzzle itself a RetryHandler
         // cannot be modified post client creation.
-        return new Client($config);
+        return new GuzzleClient($config);
     }
 
     protected function validateBaseURIOption(mixed $option): mixed {

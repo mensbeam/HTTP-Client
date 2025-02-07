@@ -6,7 +6,7 @@
  */
 
 declare(strict_types=1);
-namespace MensBeam\HTTPClient\Test;
+namespace MensBeam\HTTP\Test;
 use GuzzleHttp\{
     Exception\ClientException,
     Exception\RequestException,
@@ -15,10 +15,8 @@ use GuzzleHttp\{
     Psr7\Request,
     Psr7\Response
 };
-use MensBeam\{
-    HTTPClient
-};
-use Phake,
+use MensBeam\HTTP\Client,
+    Phake,
     Psr\Log\LoggerInterface;
 use PHPUnit\Framework\{
     Attributes\CoversClass,
@@ -32,8 +30,8 @@ use Psr\Http\Message\{
 };
 
 
-#[CoversClass('MensBeam\HTTPClient')]
-class TestHTTPClient extends TestCase {
+#[CoversClass('MensBeam\HTTP\Client')]
+class TestClient extends TestCase {
     public function testConstructor(): void {
         $logger = Phake::mock(LoggerInterface::class);
         $retryCallback = function (
@@ -43,10 +41,10 @@ class TestHTTPClient extends TestCase {
             ?RequestException $exception = null,
             ?int &$dynamicDelay = null
         ): int {
-            return HTTPClient::REQUEST_CONTINUE;
+            return Client::REQUEST_CONTINUE;
         };
 
-        $client = new HTTPClient([
+        $client = new Client([
             'dry_run' => true,
             'handler' => new MockHandler(),
             'logger' => $logger,
@@ -59,7 +57,7 @@ class TestHTTPClient extends TestCase {
         $response = Phake::mock(ResponseInterface::class);
         Phake::when($response)->getStatusCode()->thenReturn(200);
 
-        $mockClient = Phake::mock(HTTPClient::class);
+        $mockClient = Phake::mock(Client::class);
         Phake::when($mockClient)->request('GET', $uri)->thenReturn($response);
 
         $response = $mockClient->request('GET', $uri);
@@ -77,7 +75,7 @@ class TestHTTPClient extends TestCase {
             ?RequestException $exception = null,
             ?int &$dynamicDelay = null
         ): int {
-            return HTTPClient::REQUEST_CONTINUE;
+            return Client::REQUEST_CONTINUE;
         };
 
         $options = [
@@ -88,7 +86,7 @@ class TestHTTPClient extends TestCase {
             'on_retry' => $retryCallback
         ];
 
-        $client = new HTTPClient();
+        $client = new Client();
         $response = $client->request('GET', '/eek', $options);
 
         $this->assertInstanceOf(ResponseInterface::class, $response);
@@ -103,7 +101,7 @@ class TestHTTPClient extends TestCase {
 
     public function testRequestMiddleware(): void {
         $count = 0;
-        $client = new HTTPClient();
+        $client = new Client();
         $response = $client->request('GET', 'https://ook.com', [
             'dry_run' => [
                 new Response(418),
@@ -124,7 +122,7 @@ class TestHTTPClient extends TestCase {
     public function testRequestRetry_default(): void {
         // Fake logger for code coverage purposes
         $logger = Phake::mock(LoggerInterface::class);
-        $client = new HTTPClient();
+        $client = new Client();
         $response = $client->request('GET', 'https://ook.com', [
             'dry_run' => [
                 new Response(418),
@@ -148,7 +146,7 @@ class TestHTTPClient extends TestCase {
             [
                 ClientException::class,
                 function () {
-                    $client = new HTTPClient();
+                    $client = new Client();
                     $client->request('GET', 'https://ook.com', [
                         'dry_run' => [ new Response(400) ]
                     ]);
@@ -157,7 +155,7 @@ class TestHTTPClient extends TestCase {
             [
                 ClientException::class,
                 function () {
-                    $client = new HTTPClient();
+                    $client = new Client();
                     $client->request('GET', 'https://ook.com', [
                         'dry_run' => [ new Response(404) ]
                     ]);
@@ -166,7 +164,7 @@ class TestHTTPClient extends TestCase {
             [
                 ClientException::class,
                 function () {
-                    $client = new HTTPClient();
+                    $client = new Client();
                     $client->request('GET', 'https://ook.com', [
                         'dry_run' => [ new Response(410) ]
                     ]);
@@ -182,7 +180,7 @@ class TestHTTPClient extends TestCase {
     public function testRequestRetry_maxRetries(): void {
         $this->expectException(ClientException::class);
 
-        $client = new HTTPClient();
+        $client = new Client();
         $client->request('GET', 'https://ook.com', [
             'dry_run' => [
                 new Response(418),
@@ -205,13 +203,13 @@ class TestHTTPClient extends TestCase {
             ?int &$dynamicDelay = null
         ): int {
             if ($response->getStatusCode() === 418) {
-                return HTTPClient::REQUEST_STOP;
+                return Client::REQUEST_STOP;
             }
 
-            return HTTPClient::REQUEST_CONTINUE;
+            return Client::REQUEST_CONTINUE;
         };
 
-        $client = new HTTPClient();
+        $client = new Client();
         $client->request('GET', 'https://ook.com', [
             'dry_run' => [
                 new Response(418)
@@ -229,13 +227,13 @@ class TestHTTPClient extends TestCase {
             ?int &$dynamicDelay = null
         ): int {
             if ($response->getStatusCode() === 400) {
-                return HTTPClient::REQUEST_RETRY;
+                return Client::REQUEST_RETRY;
             }
 
-            return HTTPClient::REQUEST_CONTINUE;
+            return Client::REQUEST_CONTINUE;
         };
 
-        $client = new HTTPClient();
+        $client = new Client();
         $response = $client->request('GET', 'https://ook.com', [
             'dry_run' => [
                 new Response(400),
@@ -251,7 +249,7 @@ class TestHTTPClient extends TestCase {
     public function testRequestRetry_retryAfter(): void {
         // Fake logger for code coverage purposes
         $logger = Phake::mock(LoggerInterface::class);
-        $client = new HTTPClient();
+        $client = new Client();
 
         // No Retry-After
         $startTime = microtime(true);
@@ -312,84 +310,84 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new HTTPClient([ 'dry_run' => 'ook' ]);
+                    new Client([ 'dry_run' => 'ook' ]);
                 }
             ],
             // Invalid dry_run type, object
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new HTTPClient([ 'dry_run' => new \stdClass() ]);
+                    new Client([ 'dry_run' => new \stdClass() ]);
                 }
             ],
             // Invalid dry_run type (array), scalar
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new HTTPClient([ 'dry_run' => [ 'ook' ] ]);
+                    new Client([ 'dry_run' => [ 'ook' ] ]);
                 }
             ],
             // Invalid dry_run type (array), object
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new HTTPClient([ 'dry_run' => [ new \stdClass ] ]);
+                    new Client([ 'dry_run' => [ new \stdClass ] ]);
                 }
             ],
             // Invalid handler type, scalar
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new HTTPClient([ 'handler' => 'ook' ]);
+                    new Client([ 'handler' => 'ook' ]);
                 }
             ],
             // Invalid handler type, object
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new HTTPClient([ 'handler' => new \stdClass() ]);
+                    new Client([ 'handler' => new \stdClass() ]);
                 }
             ],
             // Invalid dry_run type (array), array
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new HTTPClient([ 'dry_run' => [ [] ] ]);
+                    new Client([ 'dry_run' => [ [] ] ]);
                 }
             ],
             // Invalid logger type, scalar
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new HTTPClient([ 'logger' => 'ook' ]);
+                    new Client([ 'logger' => 'ook' ]);
                 }
             ],
             // Invalid logger type, object
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new HTTPClient([ 'logger' => new \stdClass() ]);
+                    new Client([ 'logger' => new \stdClass() ]);
                 }
             ],
             // Invalid max_retries type, scalar
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new HTTPClient([ 'max_retries' => 'ook' ]);
+                    new Client([ 'max_retries' => 'ook' ]);
                 }
             ],
             // Invalid max_retries type, object
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new HTTPClient([ 'max_retries' => new \stdClass() ]);
+                    new Client([ 'max_retries' => new \stdClass() ]);
                 }
             ],
             // Invalid max_retries value
             [
                 \OutOfRangeException::class,
                 function (): void {
-                    new HTTPClient([ 'max_retries' => -1 ]);
+                    new Client([ 'max_retries' => -1 ]);
                 }
             ],
 
@@ -397,49 +395,49 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new HTTPClient([ 'middleware' => 'ook' ]);
+                    new Client([ 'middleware' => 'ook' ]);
                 }
             ],
             // Invalid middleware type, object
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new HTTPClient([ 'middleware' => new \stdClass() ]);
+                    new Client([ 'middleware' => new \stdClass() ]);
                 }
             ],
             // Invalid middleware type (array), scalar
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new HTTPClient([ 'middleware' => [ 'ook' ] ]);
+                    new Client([ 'middleware' => [ 'ook' ] ]);
                 }
             ],
             // Invalid middleware type (array), object
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new HTTPClient([ 'middleware' => [ new \stdClass ] ]);
+                    new Client([ 'middleware' => [ new \stdClass ] ]);
                 }
             ],
             // Invalid on_retry type, scalar
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new HTTPClient([ 'on_retry' => 'ook' ]);
+                    new Client([ 'on_retry' => 'ook' ]);
                 }
             ],
             // Invalid on_retry type, object
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new HTTPClient([ 'on_retry' => new \stdClass() ]);
+                    new Client([ 'on_retry' => new \stdClass() ]);
                 }
             ],
             // Invalid base_uri type, scalar
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'base_uri' => 42 ]);
                 }
             ],
@@ -447,7 +445,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'base_uri' => new \stdClass ]);
                 }
             ],
@@ -455,7 +453,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'dry_run' => 'ook' ]);
                 }
             ],
@@ -463,7 +461,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'dry_run' => new \stdClass ]);
                 }
             ],
@@ -471,7 +469,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'dry_run' => [ 'ook' ] ]);
                 }
             ],
@@ -479,7 +477,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'dry_run' => [ new \stdClass() ] ]);
                 }
             ],
@@ -487,7 +485,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'dry_run' => [ [] ] ]);
                 }
             ],
@@ -495,7 +493,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'handler' => 'ook' ]);
                 }
             ],
@@ -503,7 +501,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'handler' => new \stdClass ]);
                 }
             ],
@@ -511,7 +509,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'logger' => 'ook' ]);
                 }
             ],
@@ -519,7 +517,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'logger' => new \stdClass ]);
                 }
             ],
@@ -527,7 +525,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'max_retries' => 'ook' ]);
                 }
             ],
@@ -535,7 +533,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'max_retries' => new \stdClass ]);
                 }
             ],
@@ -543,7 +541,7 @@ class TestHTTPClient extends TestCase {
             [
                 \OutOfRangeException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'max_retries' => -1 ]);
                 }
             ],
@@ -551,7 +549,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'middleware' => 'ook' ]);
                 }
             ],
@@ -559,7 +557,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'middleware' => new \stdClass ]);
                 }
             ],
@@ -567,7 +565,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'middleware' => [ 'ook' ] ]);
                 }
             ],
@@ -575,7 +573,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'middleware' => [ new \stdClass() ] ]);
                 }
             ],
@@ -583,7 +581,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'middleware' => [ [] ] ]);
                 }
             ],
@@ -591,7 +589,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'on_retry' => 'ook' ]);
                 }
             ],
@@ -599,7 +597,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'on_retry' => new \stdClass ]);
                 }
             ],
@@ -617,7 +615,7 @@ class TestHTTPClient extends TestCase {
                         return 'ook';
                     };
 
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'on_retry' => $retryCallback ]);
                 }
             ],
@@ -635,7 +633,7 @@ class TestHTTPClient extends TestCase {
                         return 42;
                     };
 
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $t->request('GET', 'https://ook.com', [ 'on_retry' => $retryCallback ]);
                 }
             ],
@@ -643,7 +641,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'base_uri' => 42 ]);
                 }
@@ -652,7 +650,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'base_uri' => new \stdClass ]);
                 }
@@ -661,7 +659,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'dry_run' => 'ook' ]);
                 }
@@ -670,7 +668,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'dry_run' => new \stdClass ]);
                 }
@@ -679,7 +677,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'dry_run' => [ 'ook' ] ]);
                 }
@@ -688,7 +686,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'dry_run' => [ new \stdClass() ] ]);
                 }
@@ -697,7 +695,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'dry_run' => [ [] ] ]);
                 }
@@ -706,7 +704,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'handler' => 'ook' ]);
                 }
@@ -715,7 +713,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'handler' => new \stdClass ]);
                 }
@@ -724,7 +722,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'logger' => 'ook' ]);
                 }
@@ -733,7 +731,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'logger' => new \stdClass ]);
                 }
@@ -742,7 +740,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'max_retries' => 'ook' ]);
                 }
@@ -751,7 +749,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'max_retries' => new \stdClass ]);
                 }
@@ -760,7 +758,7 @@ class TestHTTPClient extends TestCase {
             [
                 \OutOfRangeException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'max_retries' => -1 ]);
                 }
@@ -769,7 +767,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'middleware' => 'ook' ]);
                 }
@@ -778,7 +776,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'middleware' => new \stdClass ]);
                 }
@@ -787,7 +785,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'middleware' => [ 'ook' ] ]);
                 }
@@ -796,7 +794,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'middleware' => [ new \stdClass() ] ]);
                 }
@@ -805,7 +803,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'middleware' => [ [] ] ]);
                 }
@@ -814,7 +812,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'on_retry' => 'ook' ]);
                 }
@@ -823,7 +821,7 @@ class TestHTTPClient extends TestCase {
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    $t = new HTTPClient();
+                    $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
                     $t->send($r, [ 'on_retry' => new \stdClass ]);
                 }
