@@ -8,11 +8,14 @@
 declare(strict_types=1);
 namespace MensBeam\HTTP;
 
+use MensBeam\HTTP\Client\{
+    RetryAware,
+    RetryMiddleware
+};
 use GuzzleHttp\{
     BodySummarizer,
     Client as GuzzleClient,
     ClientInterface as GuzzleClientInterface,
-    Exception\RequestException,
     Handler\CurlHandler,
     Handler\MockHandler,
     HandlerStack,
@@ -66,21 +69,7 @@ use Psr\Log\LoggerInterface;
  * the configuration.
  */
 class Client implements ClientInterface, GuzzleClientInterface {
-    /**
-     * @var int Used in the retry_callable option to tell the retry handler to not
-     * retry the request
-     */
-    public const REQUEST_STOP = 0;
-    /**
-     * @var int Used in the retry_callable option to tell the retry handler to retry
-     * the request
-     */
-    public const REQUEST_RETRY = 1;
-    /**
-     * @var int Used in the retry_callable option to tell the retry handler to
-     * continue onto its own logic
-     */
-    public const REQUEST_CONTINUE = 2;
+    use RetryAware;
 
     /** @var array Configuration array */
     protected array $config = [];
@@ -89,12 +78,12 @@ class Client implements ClientInterface, GuzzleClientInterface {
     protected array $configOriginal = [];
 
     /**
-     * @var bool|ResponseInterface|array[ResponseInterface] Use a mock request
+     * @var array<int|string,ResponseInterface>|bool|ResponseInterface Use a mock request
      * handler; if a Psr\Http\Message\ResponseInterface or an array of them is
      * provided it is treated as true and will return that response when making
      * requests; defaults to a 200 code response
      */
-    protected bool|ResponseInterface|array $dryRun = false;
+    protected array|bool|ResponseInterface $dryRun = false;
 
     /** @var ?callable Guzzle handler */
     protected $handler = null;
@@ -102,13 +91,13 @@ class Client implements ClientInterface, GuzzleClientInterface {
     /** @var LoggerInterface|null Logger instance */
     protected ?LoggerInterface $logger = null;
 
-    /** @var array[\Closure]|\Closure|null Additional Guzzle middleware to use */
+    /** @var array<int|string,\Closure>|\Closure|null Additional Guzzle middleware to use */
     protected array|\Closure|null $middleware = null;
 
     /** @var int Maximum number of retries */
     protected int $maxRetries = 10;
 
-    /** @var array|\Closure|string|null Callback function for retry logic */
+    /** @var array<mixed,string>|\Closure|string|null Callback function for retry logic */
     protected array|\Closure|string|null $onRetry = null;
 
 
@@ -241,7 +230,7 @@ class Client implements ClientInterface, GuzzleClientInterface {
      * Send an HTTP request.
      *
      * @param RequestInterface $request The request to send
-     * @param array $options Request options
+     * @param array<string,mixed> $options Request options
      *
      * Accepts Guzzle's built-in request options with the following additions:
      *
@@ -344,121 +333,15 @@ class Client implements ClientInterface, GuzzleClientInterface {
             $stack->push(Middleware::httpErrors(new BodySummarizer(truncateAt: 32767)));
 
             // Set default error handling behavior; this can be extended using the on_retry option in the request
-
-            $dynamicDelay = null;
-            $delayCallable = function (int $attempt) use (&$dynamicDelay): int {
-                if ($dynamicDelay !== null) {
-                    return $dynamicDelay;
-                }
-
-                return 1000 * 2 ** $attempt;
-            };
-
             if ($maxRetries > 0) {
-                $stack->push(Middleware::retry(
-                    function (int $retries, RequestInterface $request, ?ResponseInterface $response = null, ?RequestException $exception = null) use($delayCallable, &$dynamicDelay, $logger, $maxRetries, $onRetry): bool {
-                        $dynamicDelay = null;
-
-                        if ($retries > $maxRetries) {
-                            return false;
-                        }
-
-                        if ($onRetry !== null) {
-                            $result = $onRetry($retries, $request, $response, $exception, $dynamicDelay);
-
-                            if (!is_integer($result)) {
-                                throw new \InvalidArgumentException(sprintf('The \'on_retry\' option\'s callable must return an integer; %s given', $result));
-                            }
-                            if ($result < 0 || $result > 2) {
-                                throw new \OutOfRangeException(sprintf('The \'on_retry\' option\'s callable must return an integer between 0 and 2; %s given', $result));
-                            }
-
-                            if ($result === self::REQUEST_RETRY) {
-                                return true;
-                            }
-                            if ($result === self::REQUEST_STOP) {
-                                return false;
-                            }
-                        }
-
-                        // Not sure if this can happen, but here it is just in case.
-                        if ($response === null && $exception === null) {
-                            return false; // @codeCoverageIgnore
-                        }
-
-                        $code = ($response !== null) ? $response->getStatusCode() : 0;
-                        switch ($code) {
-                            case 400:
-                            case 404:
-                            case 410:
-                            return false;
-                            case 429:
-                            case 503:
-                                // If there isn't a Retry-After header then sleep exponentially.
-                                if (!$response->hasHeader('Retry-After')) {
-                                    if ($logger !== null) {
-                                        $logger->debug(sprintf('%s error, retrying after %s', $code, ($delayCallable($retries) / 1000) . 's'));
-                                    }
-                                    return true;
-                                }
-
-                                // The Retry-After header is either supposed to have an HTTP date format or a
-                                // delay in seconds, but some mistakenly supply a Unix timestamp instead. This
-                                // requires a bit more work...
-                                $retryAfter = $response->getHeaderLine('Retry-After');
-                                // If the Retry-After header is a date string have PHP parse it and get the
-                                // number of seconds necessary to wait.
-                                if (!is_numeric($retryAfter)) {
-                                    $retryAfter = ((new \DateTimeImmutable($retryAfter))->getTimestamp() - time()) * 1000;
-                                } else {
-                                    // Otherwise, if it is a number that is greater than the current Unix timestamp
-                                    // parse it as a Unix timestamp and subtract the current timestamp from it to
-                                    // get the seconds.
-                                    $retryAfter = (int)$retryAfter;
-                                    $now = time();
-                                    if ($retryAfter >= $now) {
-                                        $retryAfter = (\DateTimeImmutable::createFromFormat('U', "$retryAfter")->getTimestamp() - $now) * 1000;
-                                    }
-                                }
-
-                                if ($retryAfter > 0) {
-                                    if ($logger !== null) {
-                                        $logger->debug(sprintf('%s error, retrying after %s', $code, "{$retryAfter}s"));
-                                    }
-
-                                    $dynamicDelay = $retryAfter;
-                                }
-                            return true;
-                            default:
-                                if ($exception === null && $code < 400) {
-                                    return false;
-                                }
-
-                                // Check for cURL errors in the exception and retry if so
-                                // Not sure how to test curl errors
-                                // @codeCoverageIgnoreStart
-                                if ($exception !== null) {
-                                    $curlErrno = $exception->getHandlerContext()['errno'] ?? null;
-                                    if ($curlErrno !== null) {
-                                        if ($logger !== null) {
-                                            $logger->debug(sprintf('%s error (cURL error %s), retrying after %s',  $code, $curlErrno, ($delayCallable($retries) / 1000) . 's'));
-                                        }
-
-                                        return true;
-                                    }
-                                }
-                                // @codeCoverageIgnoreEnd
-
-                                if ($logger !== null) {
-                                    $logger->debug(sprintf('%s error, retrying after %s', $code, ($delayCallable($retries) / 1000) . 's'));
-                                }
-                                return true;
-                        }
-
-                        return false;
-                    },
-                    $delayCallable
-                ));
+                $stack->push(function (callable $handler) use ($logger, $maxRetries, $onRetry) {
+                    return new RetryMiddleware(
+                        nextHandler: $handler,
+                        retryCallback: $onRetry,
+                        logger: $logger,
+                        maxRetries: $maxRetries
+                    );
+                });
             }
 
             if (($middleware ?? null) !== null) {
