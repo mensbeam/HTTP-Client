@@ -52,7 +52,7 @@ class TestClient extends TestCase {
             'handler' => new MockHandler(),
             'logger' => $logger,
             'max_retries' => 42,
-            'on_retry' => $retryCallback
+            'retry_callback' => $retryCallback
         ]);
         $uri = Phake::mock(UriInterface::class);
         Phake::when($uri)->__toString()->thenReturn('https://ook.com');
@@ -86,7 +86,7 @@ class TestClient extends TestCase {
             'dry_run' => true,
             'logger' => $logger,
             'max_retries' => 42,
-            'on_retry' => $retryCallback
+            'retry_callback' => $retryCallback
         ];
 
         $client = new Client();
@@ -195,7 +195,7 @@ class TestClient extends TestCase {
         ]);
     }
 
-    public function testRequestRetry_onRetryFail(): void {
+    public function testRequestRetry_retryCallbackFail(): void {
         $this->expectException(ClientException::class);
 
         $retryCallback = function (
@@ -217,11 +217,11 @@ class TestClient extends TestCase {
             'dry_run' => [
                 new Response(418)
             ],
-            'on_retry' => $retryCallback
+            'retry_callback' => $retryCallback
         ]);
     }
 
-    public function testRequestRetry_onRetryRetry(): void {
+    public function testRequestRetry_retryCallbackRetry(): void {
         $retryURI = null;
         $retryCallback = function (
             int $retries,
@@ -248,7 +248,7 @@ class TestClient extends TestCase {
                 new Response(400),
                 new Response(200)
             ],
-            'on_retry' => $retryCallback
+            'retry_callback' => $retryCallback
         ]);
 
         $this->assertInstanceOf(ResponseInterface::class, $response);
@@ -429,18 +429,18 @@ class TestClient extends TestCase {
                     new Client([ 'middleware' => [ new \stdClass ] ]);
                 }
             ],
-            // Invalid on_retry type, scalar
+            // Invalid retry_callback type, scalar
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new Client([ 'on_retry' => 'ook' ]);
+                    new Client([ 'retry_callback' => 'ook' ]);
                 }
             ],
-            // Invalid on_retry type, object
+            // Invalid retry_callback type, object
             [
                 \InvalidArgumentException::class,
                 function (): void {
-                    new Client([ 'on_retry' => new \stdClass() ]);
+                    new Client([ 'retry_callback' => new \stdClass() ]);
                 }
             ],
             // Invalid base_uri type, scalar
@@ -595,23 +595,23 @@ class TestClient extends TestCase {
                     $t->request('GET', 'https://ook.com', [ 'middleware' => [ [] ] ]);
                 }
             ],
-            // Invalid on_retry type, scalar
+            // Invalid retry_callback type, scalar
             [
                 \InvalidArgumentException::class,
                 function (): void {
                     $t = new Client();
-                    $t->request('GET', 'https://ook.com', [ 'on_retry' => 'ook' ]);
+                    $t->request('GET', 'https://ook.com', [ 'retry_callback' => 'ook' ]);
                 }
             ],
-            // Invalid on_retry type, object
+            // Invalid retry_callback type, object
             [
                 \InvalidArgumentException::class,
                 function (): void {
                     $t = new Client();
-                    $t->request('GET', 'https://ook.com', [ 'on_retry' => new \stdClass ]);
+                    $t->request('GET', 'https://ook.com', [ 'retry_callback' => new \stdClass ]);
                 }
             ],
-            // Invalid on_retry return value, string
+            // Invalid retry_callback return value, string
             [
                 \InvalidArgumentException::class,
                 function (): void {
@@ -626,10 +626,10 @@ class TestClient extends TestCase {
                     };
 
                     $t = new Client();
-                    $t->request('GET', 'https://ook.com', [ 'on_retry' => $retryCallback ]);
+                    $t->request('GET', 'https://ook.com', [ 'retry_callback' => $retryCallback ]);
                 }
             ],
-            // Invalid on_retry return value, string
+            // Invalid retry_callback return value, string
             [
                 \OutOfRangeException::class,
                 function (): void {
@@ -644,7 +644,7 @@ class TestClient extends TestCase {
                     };
 
                     $t = new Client();
-                    $t->request('GET', 'https://ook.com', [ 'on_retry' => $retryCallback ]);
+                    $t->request('GET', 'https://ook.com', [ 'retry_callback' => $retryCallback ]);
                 }
             ],
             // Invalid base_uri type, scalar
@@ -818,22 +818,22 @@ class TestClient extends TestCase {
                     $t->send($r, [ 'middleware' => [ [] ] ]);
                 }
             ],
-            // Invalid on_retry type, scalar
+            // Invalid retry_callback type, scalar
             [
                 \InvalidArgumentException::class,
                 function (): void {
                     $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
-                    $t->send($r, [ 'on_retry' => 'ook' ]);
+                    $t->send($r, [ 'retry_callback' => 'ook' ]);
                 }
             ],
-            // Invalid on_retry type, object
+            // Invalid retry_callback type, object
             [
                 \InvalidArgumentException::class,
                 function (): void {
                     $t = new Client();
                     $r = new Request('GET', 'https://ook.com');
-                    $t->send($r, [ 'on_retry' => new \stdClass ]);
+                    $t->send($r, [ 'retry_callback' => new \stdClass ]);
                 }
             ]
         ];

@@ -105,7 +105,7 @@ $callback = function (
     return Client::REQUEST_CONTINUE;
 };
 
-$client = new Client('GET', 'https://ook.com', [ 'on_retry' => $callback ]);
+$client = new Client('GET', 'https://ook.com', [ 'retry_callback' => $callback ]);
 ```
 
 ### Custom Retry Logic with Modified Request
@@ -128,7 +128,7 @@ $callback = function (
     return Client::REQUEST_CONTINUE;
 };
 
-$client = new Client([ 'on_retry' => $callback ]);
+$client = new Client([ 'retry_callback' => $callback ]);
 ```
 
 ### Using a Logger
@@ -149,8 +149,26 @@ $response = $client->request('GET', 'https://api.example.com/data');
 use MensBeam\HTTP\Client,
     GuzzleHttp\Psr7\Response;
 
-$mockResponse = new Response(200, [], 'Mock response data');
-$client = new Client(['dry_run' => $mockResponse]);
+$client = new Client([
+    'dry_run' => [
+        new Response(418, [], 'Short and stout?'),
+        new Response(200, [], 'Mock response data')
+    ],
+    'retry_callback' => function (
+        int $retries,
+        RequestInterface $request,
+        ?ResponseInterface $response = null,
+        ?RequestException $exception = null,
+        ?int $dynamicDelay = null
+    ): int {
+        $code = $response?->getStatusCode();
+
+        if ($code === 418) {
+            return Client::REQUEST_RETRY;
+        }
+        return Client::REQUEST_CONTINUE;
+    }
+]);
 $response = $client->request('GET', 'https://api.example.com/data');
 echo (string)$response->getBody();
 ```
@@ -170,13 +188,13 @@ echo (string)$response->getBody();
 ```
 
 ## Configuration Options
-| Option        | Type                                               | Default | Description                     |
-|---------------|----------------------------------------------------|---------|---------------------------------|
-| `dry_run`     | `bool\|\Psr\Http\Message\ResponseInterface\|array` | `false` | Enables mock responses          |
-| `logger`      | `Psr\Log\LoggerInterface\|null`                    | `null`  | Logs debugging information      |
-| `max_retries` | `int`                                              | `10`    | Maximum number of retries       |
-| `middleware`  | `array\|Closure`                                   | `null`  | Middleware stack configuration  |
-| `on_retry`    | `?callable`                                        | `null`  | Custom retry logic callback     |
+| Option              | Type                                               | Default | Description                                             |
+|---------------------|----------------------------------------------------|---------|---------------------------------------------------------|
+| `dry_run`           | `bool\|\Psr\Http\Message\ResponseInterface\|array` | `false` | Enables mock responses                                  |
+| `logger`            | `Psr\Log\LoggerInterface\|null`                    | `null`  | Logs debugging information                              |
+| `max_retries`       | `int`                                              | `10`    | Maximum number of retries                               |
+| `middleware`        | `array\|Closure`                                   | `null`  | Middleware stack configuration                          |
+| `retry_callback`    | `?callable`                                        | `null`  | Custom retry logic callback; fires after every response |
 
 Configuration may be applied both in the constructor and in `Client::request` and `Client::send`. All configuration on the request overrides any configuration on the class but only for that request. _HTTP-Client_ will also accept the remaining Guzzle [Client configuration][a] and [request options][b].
 

@@ -57,7 +57,7 @@ use Psr\Log\LoggerInterface;
  *    - **429, 503** – If the response includes a `Retry-After` header, the
  *      specified delay will be automatically applied before retrying the request.
  *
- * The retry behavior can be customized using the `on_retry` configuration
+ * The retry behavior can be customized using the `retry_callback` configuration
  * option. This callback allows fine-grained control over retry logic by
  * evaluating the request, response, and exception details. This allows for
  * flexible error-handling strategies, such as retrying specific response codes
@@ -96,7 +96,7 @@ class Client implements ClientInterface, GuzzleClientInterface {
     protected int $maxRetries = 10;
 
     /** @var array<mixed,string>|\Closure|string|null Callback function for retry logic */
-    protected array|\Closure|string|null $onRetry = null;
+    protected array|\Closure|string|null $retryCallback = null;
 
 
 
@@ -113,7 +113,7 @@ class Client implements ClientInterface, GuzzleClientInterface {
      *     - max_retries: int Maximum retry attempts; 0 disables retrying
      *       (default: 10)
      *     - middleware: array[\Closure]|\Closure|null Additional Guzzle middleware to use
-     *     - on_retry: ?callable Callback for retry decision logic
+     *     - retry_callback: ?callable Callback for retry decision logic
      *
      * @throws \InvalidArgumentException
      * @throws \OutOfRangeException
@@ -157,12 +157,12 @@ class Client implements ClientInterface, GuzzleClientInterface {
         $this->middleware = $middleware;
         unset($config['middleware']);
 
-        $onRetry = $this->validateOnRetryOption($config['on_retry'] ?? null);
-        if ($onRetry instanceof \Throwable) {
-            throw $onRetry;
+        $retryCallback = $this->validateRetryCallbackOption($config['retry_callback'] ?? null);
+        if ($retryCallback instanceof \Throwable) {
+            throw $retryCallback;
         }
-        $this->onRetry = $onRetry;
-        unset($config['on_retry']);
+        $this->retryCallback = $retryCallback;
+        unset($config['retry_callback']);
 
         $this->config = $config;
     }
@@ -191,7 +191,7 @@ class Client implements ClientInterface, GuzzleClientInterface {
      *     - max_retries: int Maximum retry attempts for this request; 0 disables
      *       retrying (default: 10)
      *     - middleware: array[\Closure]|\Closure|null Additional Guzzle middleware to use
-     *     - on_retry: ?callable Callback for retry decision logic for this request
+     *     - retry_callback: ?callable Callback for retry decision logic for this request
      *
      * HTTP-Client will also accept the remaining Guzzle Client configuration options
      * in the request options array to be applied per request
@@ -237,7 +237,7 @@ class Client implements ClientInterface, GuzzleClientInterface {
      *     - max_retries: int Maximum retry attempts for this request; 0 disables
      *       retrying (default: 10)
      *     - middleware: array[\Closure]|\Closure|null Additional Guzzle middleware to use
-     *     - on_retry: ?callable Callback for retry decision logic for this request
+     *     - retry_callback: ?callable Callback for retry decision logic for this request
      *
      * HTTP-Client will also accept the remaining Guzzle Client configuration options
      * in the request options array to be applied per request
@@ -313,11 +313,11 @@ class Client implements ClientInterface, GuzzleClientInterface {
         }
         unset($options['middleware']);
 
-        $onRetry = $this->validateOnRetryOption($options['on_retry'] ?? null);
-        if ($onRetry instanceof \Throwable) {
-            return $onRetry;
+        $retryCallback = $this->validateRetryCallbackOption($options['retry_callback'] ?? null);
+        if ($retryCallback instanceof \Throwable) {
+            return $retryCallback;
         }
-        unset($options['on_retry']);
+        unset($options['retry_callback']);
 
         if ($handler === null) {
             // Forces use of cURL so cURL's descriptive errors may be used when requests
@@ -330,12 +330,12 @@ class Client implements ClientInterface, GuzzleClientInterface {
             // overengineering the most asinine method of changing it exists.
             $stack->push(Middleware::httpErrors(new BodySummarizer(truncateAt: 32767)));
 
-            // Set default error handling behavior; this can be extended using the on_retry option in the request
+            // Set default error handling behavior; this can be extended using the retry_callback option in the request
             if ($maxRetries > 0) {
-                $stack->push(function (callable $handler) use ($logger, $maxRetries, $onRetry) {
+                $stack->push(function (callable $handler) use ($logger, $maxRetries, $retryCallback) {
                     return new RetryMiddleware(
                         nextHandler: $handler,
-                        retryCallback: $onRetry,
+                        retryCallback: $retryCallback,
                         logger: $logger,
                         maxRetries: $maxRetries
                     );
@@ -456,10 +456,10 @@ class Client implements ClientInterface, GuzzleClientInterface {
                 $type = $option::class;
             }
 
-            return new \InvalidArgumentException(sprintf('The \'on_retry\' option\'s callable must return an integer;  %s given', $type));
+            return new \InvalidArgumentException(sprintf('The \'retry_callback\' option\'s callable must return an integer;  %s given', $type));
         }
         if ($option < 1) {
-            return new \OutOfRangeException(sprintf('The \'on_retry\' option\'s callable must be >= 0; %s given', $option));
+            return new \OutOfRangeException(sprintf('The \'retry_callback\' option\'s callable must be >= 0; %s given', $option));
         }
 
         return $option;
@@ -499,9 +499,9 @@ class Client implements ClientInterface, GuzzleClientInterface {
         return $option;
     }
 
-    protected function validateOnRetryOption(mixed $option): callable|\Throwable|null {
+    protected function validateRetryCallbackOption(mixed $option): callable|\Throwable|null {
         if ($option === null) {
-            return $this->onRetry;
+            return $this->retryCallback;
         }
 
         if (!is_callable($option)) {
@@ -510,7 +510,7 @@ class Client implements ClientInterface, GuzzleClientInterface {
                 $type = $option::class;
             }
 
-            return new \InvalidArgumentException(sprintf('The \'on_retry\' option needs to be a callable; %s given', $type));
+            return new \InvalidArgumentException(sprintf('The \'retry_callback\' option needs to be a callable; %s given', $type));
         }
 
         return $option;
