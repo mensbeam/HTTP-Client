@@ -196,6 +196,8 @@ echo (string)$response->getBody();
 | `middleware`        | `array\|Closure`                                   | `null`  | Middleware stack configuration                          |
 | `retry_callback`    | `?callable`                                        | `null`  | Custom retry logic callback; fires after every response |
 
+**NOTE**: Earlier versions of _HTTP-Client_ had the `on_retry` option. It was replaced with `retry_callback` in version 1.5. This is because the original name didn't accurately reflect when it was called. It fires after every response regardless of outcome, and its return value determines if it is retried.
+
 Configuration may be applied both in the constructor and in `Client::request` and `Client::send`. All configuration on the request overrides any configuration on the class but only for that request. _HTTP-Client_ will also accept the remaining Guzzle [Client configuration][a] and [request options][b].
 
 ## License
