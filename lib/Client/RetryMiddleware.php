@@ -112,7 +112,9 @@ class RetryMiddleware {
      * @return callable Function that processes the rejection.
      */
     protected function onRejected(RequestInterface $request, array $options): callable {
+        // For whatever reason the closure's contents don't show up in code coverage, but a test exists that shows it does run
         return function ($reason) use ($request, $options) {
+            // @codeCoverageIgnoreStart
             $decision = $this->decide(
                 $options['retries'],
                 $request,
@@ -125,6 +127,7 @@ class RetryMiddleware {
             }
 
             return $this->retryRequest(($decision instanceof RequestInterface) ? $decision : $request, $options);
+            // @codeCoverageIgnoreEnd
         };
     }
 

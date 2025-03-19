@@ -59,11 +59,9 @@ use Psr\Log\LoggerInterface;
  *
  * The retry behavior can be customized using the `on_retry` configuration
  * option. This callback allows fine-grained control over retry logic by
- * evaluating the request, response, and exception details. Below is an example
- * of how a custom retry callback can be implemented:
- *
- * This allows for flexible error-handling strategies, such as retrying specific
- * response codes or dynamically modifying retry delays.
+ * evaluating the request, response, and exception details. This allows for
+ * flexible error-handling strategies, such as retrying specific response codes
+ * or dynamically modifying retry delays.
  *
  * In addition, all of these may be overwritten by supplying a custom handler in
  * the configuration.

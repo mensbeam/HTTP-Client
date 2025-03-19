@@ -13,7 +13,8 @@ use GuzzleHttp\{
     Handler\MockHandler,
     Middleware,
     Psr7\Request,
-    Psr7\Response
+    Psr7\Response,
+    Psr7\Uri
 };
 use MensBeam\HTTP\Client,
     Phake,
@@ -31,6 +32,8 @@ use Psr\Http\Message\{
 
 
 #[CoversClass('MensBeam\HTTP\Client')]
+#[CoversClass('MensBeam\HTTP\Client\RetryAware')]
+#[CoversClass('MensBeam\HTTP\Client\RetryMiddleware')]
 class TestClient extends TestCase {
     public function testConstructor(): void {
         $logger = Phake::mock(LoggerInterface::class);
@@ -219,15 +222,21 @@ class TestClient extends TestCase {
     }
 
     public function testRequestRetry_onRetryRetry(): void {
+        $retryURI = null;
         $retryCallback = function (
             int $retries,
-            RequestInterface $request,
+            RequestInterface &$request,
             ?ResponseInterface $response = null,
             ?RequestException $exception = null,
-            ?int &$dynamicDelay = null
-        ): int {
-            if ($response->getStatusCode() === 400) {
+            ?int $dynamicDelay = null
+        ) use (&$retryURI): int {
+            $code = $response->getStatusCode();
+            if ($code === 400) {
+                $request = $request->withUri(new Uri('https://eek.com'));
                 return Client::REQUEST_RETRY;
+            }
+            if ($code === 200) {
+                $retryURI = (string)$request->getUri();
             }
 
             return Client::REQUEST_CONTINUE;
@@ -244,6 +253,7 @@ class TestClient extends TestCase {
 
         $this->assertInstanceOf(ResponseInterface::class, $response);
         $this->assertEquals(200, $response->getStatusCode());
+        $this->assertSame('https://eek.com', $retryURI);
     }
 
     public function testRequestRetry_retryAfter(): void {

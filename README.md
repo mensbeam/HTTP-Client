@@ -16,7 +16,7 @@ Guzzle's built-in retry mechanism is powerful but often overly complex. In pract
 - **Configurable Retry Behavior**: Custom retry logic via a callback. This callback allows fine-grained control over retry logic by evaluating the request, response, and exception details
 - **Retry-After Header Support**: Automatically respects server-provided retry delays
 - **Extended Exception Messages**: Guzzle imposes an absurdly restrictive character limit on exception messages, [which is actively harmful when debugging][c]. To address this, this class automatically overrides the behavior by increasing the limit to 32767 characters
-- **Support for Mock Responses**: Allows testing without making actual HTTP requests
+- **Support for Mock Responses**: Allows for testing without making actual HTTP requests
 
 ## Installation
 ```bash
@@ -48,7 +48,7 @@ class Client {
 public function Client::__construct(array $config = [])
 ```
 
-Returns new _HTTP-Client_ object.
+Returns new `Client` object.
 
 #### Parameters
 **config** - An array of configuration options
@@ -97,9 +97,32 @@ $callback = function (
     RequestInterface $request,
     ?ResponseInterface $response = null,
     ?RequestException $exception = null,
-    ?int &$dynamicDelay = null
+    ?int $dynamicDelay = null
 ): int {
     if ($response && $response->getStatusCode() === 400) {
+        return Client::REQUEST_RETRY;
+    }
+    return Client::REQUEST_CONTINUE;
+};
+
+$client = new Client('GET', 'https://ook.com', [ 'on_retry' => $callback ]);
+```
+
+### Custom Retry Logic with Modified Request
+```php
+use MensBeam\HTTP\Client,
+    GuzzleHttp\Psr7\Request,
+    GuzzleHttp\Psr7\Uri;
+
+$callback = function (
+    int $retries,
+    RequestInterface &$request,
+    ?ResponseInterface $response = null,
+    ?RequestException $exception = null,
+    ?int $dynamicDelay = null
+): int {
+    if ($response && $response->getStatusCode() === 400) {
+        $request = $request->withUri(new Uri('https://eek.com'))
         return Client::REQUEST_RETRY;
     }
     return Client::REQUEST_CONTINUE;
