@@ -8,19 +8,15 @@
 declare(strict_types=1);
 namespace MensBeam\HTTP;
 
-use MensBeam\HTTP\Client\{
-    RetryAware,
-    RetryMiddleware
-};
 use GuzzleHttp\{
     BodySummarizer,
     Client as GuzzleClient,
-    ClientInterface as GuzzleClientInterface,
+    Exception\RequestException,
+    Exception\ConnectException,
     Handler\CurlHandler,
     Handler\MockHandler,
     HandlerStack,
     Middleware,
-    Promise\PromiseInterface,
     Psr7\Response
 };
 use Psr\Http\{
@@ -66,8 +62,22 @@ use Psr\Log\LoggerInterface;
  * In addition, all of these may be overwritten by supplying a custom handler in
  * the configuration.
  */
-class Client implements ClientInterface, GuzzleClientInterface {
-    use RetryAware;
+class Client implements ClientInterface {
+    /**
+     * @var int Used in retry callables to tell the retry handler to not retry the
+     * request
+     */
+    public const REQUEST_STOP = 0;
+    /**
+     * @var int Used in retry callables to tell the retry handler to retry the
+     * request
+     */
+    public const REQUEST_RETRY = 1;
+    /**
+     * @var int Used in retry callables to tell the retry handler to continue onto
+     * its own logic
+     */
+    public const REQUEST_CONTINUE = 2;
 
     /** @var array Configuration array */
     protected array $config = [];
@@ -205,24 +215,8 @@ class Client implements ClientInterface, GuzzleClientInterface {
      * @see https://docs.guzzlephp.org/en/stable/request-options.html for documentation on Guzzle's request options
      */
     public function request(string $method, $uri = '', array $options = []): ResponseInterface {
-        $client = $this->getGuzzleClient($options);
-        if ($client instanceof \Throwable) {
-            throw $client;
-        }
-
-        return $client->request($method, $uri, $options);
+        return $this->sendRequestWithRetries($method, $uri, $options);
     }
-
-    // @codeCoverageIgnoreStart
-    public function requestAsync(string $method, $uri = '', array $options = []): PromiseInterface {
-        $client = $this->getGuzzleClient($options);
-        if ($client instanceof \Throwable) {
-            throw $client;
-        }
-
-        return $client->requestAsync($method, $uri, $options);
-    }
-    // @codeCoverageIgnoreEnd
 
     /**
      * Send an HTTP request.
@@ -246,24 +240,12 @@ class Client implements ClientInterface, GuzzleClientInterface {
      * @throws \OutOfRangeException
      */
     public function send(RequestInterface $request, array $options = []): ResponseInterface {
-        $client = $this->getGuzzleClient($options);
-        if ($client instanceof \Throwable) {
-            throw $client;
+        if (!isset($options['body']) && !isset($options['form_params']) && !isset($options['json']) && !isset($options['multipart'])) {
+            $options['body'] = $request->getBody();
         }
 
-        return $client->send($request, $options);
+        return $this->sendRequestWithRetries($request->getMethod(), $request->getUri(), $options);
     }
-
-    // @codeCoverageIgnoreStart
-    public function sendAsync(RequestInterface $request, array $options = []): PromiseInterface {
-        $client = $this->getGuzzleClient($options);
-        if ($client instanceof \Throwable) {
-            throw $client;
-        }
-
-        return $client->sendAsync($request, $options);
-    }
-    // @codeCoverageIgnoreEnd
 
     // @codeCoverageIgnoreStart
     public function sendRequest(RequestInterface $request): ResponseInterface {
@@ -299,13 +281,12 @@ class Client implements ClientInterface, GuzzleClientInterface {
         if ($logger instanceof \Throwable) {
             return $logger;
         }
-        unset($options['logger']);
 
         $maxRetries = $this->validateMaxRetriesOption($options['max_retries'] ?? null);
         if ($maxRetries instanceof \Throwable) {
             return $maxRetries;
         }
-        unset($options['max_retries']);
+        $options['max_retries'] = $maxRetries ?? 10;
 
         $middleware = $this->validateMiddlewareOption($options['middleware'] ?? null, $handler);
         if ($middleware instanceof \Throwable) {
@@ -317,7 +298,6 @@ class Client implements ClientInterface, GuzzleClientInterface {
         if ($retryCallback instanceof \Throwable) {
             return $retryCallback;
         }
-        unset($options['retry_callback']);
 
         if ($handler === null) {
             // Forces use of cURL so cURL's descriptive errors may be used when requests
@@ -329,18 +309,6 @@ class Client implements ClientInterface, GuzzleClientInterface {
             // (something like ~200) limit on messages, so naturally because of
             // overengineering the most asinine method of changing it exists.
             $stack->push(Middleware::httpErrors(new BodySummarizer(truncateAt: 32767)));
-
-            // Set default error handling behavior; this can be extended using the retry_callback option in the request
-            if ($maxRetries > 0) {
-                $stack->push(function (callable $handler) use ($logger, $maxRetries, $retryCallback) {
-                    return new RetryMiddleware(
-                        nextHandler: $handler,
-                        retryCallback: $retryCallback,
-                        logger: $logger,
-                        maxRetries: $maxRetries
-                    );
-                });
-            }
 
             if (($middleware ?? null) !== null) {
                 $append = (!is_array($middleware)) ? [ $middleware ] : $middleware;
@@ -354,9 +322,148 @@ class Client implements ClientInterface, GuzzleClientInterface {
 
         $config['handler'] = $handler;
 
-        // Every request creates a new client because in Guzzle itself a RetryHandler
-        // cannot be modified post client creation.
+        // Every request creates a new client
         return new GuzzleClient($config);
+    }
+
+    protected function sendRequestWithRetries(string $method, string|UriInterface $uri = '', array $options = []): ResponseInterface {
+        $client = $this->getGuzzleClient($options);
+        if ($client instanceof \Throwable) {
+            throw $client;
+        }
+
+        // So the callback itself cannot be modified by the callback
+        $retryCallback = $options['retry_callback'] ?? null;
+        unset($options['retry_callback']);
+
+        $delay = $retryAttempt = 0;
+        while (true) {
+            // So the callback itself cannot be modified by the callback
+            if (($options['retry_callback'] ?? null) !== $retryCallback) {
+                $options['retry_callback'] = $retryCallback;
+            }
+
+            try {
+                $o = $options;
+                // Don't want the remaining custom options exposed to Guzzle
+                unset($o['logger']);
+                unset($o['max_retries']);
+                $response = $client->request($method, $uri, $o);
+                if ($options['max_retries'] > 0) {
+                    if ($this->shouldRetry($retryAttempt, $method, $uri, $options, $delay, $response, null, $retryCallback)) {
+                        usleep($delay * 1000); // @codeCoverageIgnore
+                        continue;
+                    }
+                }
+            } catch (ConnectException|RequestException $exception) {
+                if ($options['max_retries'] === 0) {
+                    throw $exception;
+                }
+
+                $response = ($exception instanceof RequestException && $exception->hasResponse()) ? $exception->getResponse() : null;
+
+                if (++$retryAttempt <= $options['max_retries']) {
+                    $delay = 1000 * 2 ** ($retryAttempt - 1);
+
+                    if ($this->shouldRetry($retryAttempt, $method, $uri, $options, $delay, $response, $exception, $retryCallback)) {
+                        usleep($delay * 1000);
+                        continue;
+                    }
+                }
+
+                throw $exception;
+            }
+
+            break;
+        }
+
+        return $response;
+    }
+
+    protected function shouldRetry(int &$retryAttempt, string &$method, string|UriInterface &$uri, array &$options, int &$delay, ?ResponseInterface $response = null, ConnectException|RequestException|null $exception = null, ?callable $retryCallback = null): bool {
+        if ($retryCallback !== null) {
+            $result = ($retryCallback)($retryAttempt, $method, $uri, $options, $delay, $response, $exception);
+
+            if (!is_integer($result)) {
+                throw new \InvalidArgumentException(sprintf('The \'retry_callback\' option\'s callable must return an integer; %s given', $result));
+            }
+            if ($result < 0 || $result > 2) {
+                throw new \OutOfRangeException(sprintf('The \'retry_callback\' option\'s callable must return an integer between 0 and 2; %s given', $result));
+            }
+
+            if ($result === self::REQUEST_RETRY) {
+                return true;
+            }
+            if ($result === self::REQUEST_STOP) {
+                return false;
+            }
+        }
+
+        // Not sure if this can happen, but here it is just in case.
+        if ($response === null && $exception === null) {
+            return false; // @codeCoverageIgnore
+        }
+
+        $logger = $options['logger'] ?? null;
+
+        $code = $response?->getStatusCode() ?? 0;
+        switch ($code) {
+            case 400:
+            case 404:
+            case 410:
+            return false;
+            case 429:
+            case 503:
+                // If there isn't a Retry-After header then sleep exponentially.
+                if (!$response->hasHeader('Retry-After')) {
+                    $logger?->debug(sprintf('%s error, retrying after %s', $code, ($delay / 1000) . 's'));
+                    return true;
+                }
+
+                // The Retry-After header is either supposed to have an HTTP date format or a
+                // delay in seconds, but some mistakenly supply a Unix timestamp instead. This
+                // requires a bit more work...
+                $retryAfter = $response->getHeaderLine('Retry-After');
+                // If the Retry-After header is a date string have PHP parse it and get the
+                // number of seconds necessary to wait.
+                if (!is_numeric($retryAfter)) {
+                    $retryAfter = ((new \DateTimeImmutable($retryAfter))->getTimestamp() - time()) * 1000;
+                } else {
+                    // Otherwise, if it is a number that is greater than the current Unix timestamp
+                    // parse it as a Unix timestamp and subtract the current timestamp from it to
+                    // get the seconds.
+                    $retryAfter = (int)$retryAfter;
+                    $now = time();
+                    if ($retryAfter >= $now) {
+                        $retryAfter = (\DateTimeImmutable::createFromFormat('U', "$retryAfter")->getTimestamp() - $now) * 1000;
+                    }
+                }
+
+                if ($retryAfter > 0) {
+                    $logger?->debug(sprintf('%s error, retrying after %s', $code, "{$retryAfter}s"));
+                    $delay = $retryAfter;
+                }
+            return true;
+            default:
+                if ($exception === null && $code < 400) {
+                    return false;
+                }
+
+                // Check for cURL errors in the exception and retry if so
+                // Not sure how to test curl errors
+                // @codeCoverageIgnoreStart
+                if ($exception !== null) {
+                    $curlErrno = $exception->getHandlerContext()['errno'] ?? null;
+                    if ($curlErrno !== null) {
+                        $logger?->debug(sprintf('%s error (cURL error %s), retrying after %s',  $code, $curlErrno, ($delay / 1000) . 's'));
+                        return true;
+                    }
+                }
+                // @codeCoverageIgnoreEnd
+
+                $logger?->debug(sprintf('%s error, retrying after %s', $code, ($delay / 1000) . 's'));
+                return true;
+        }
     }
 
     protected function validateBaseURIOption(mixed $option): mixed {
@@ -456,10 +563,10 @@ class Client implements ClientInterface, GuzzleClientInterface {
                 $type = $option::class;
             }
 
-            return new \InvalidArgumentException(sprintf('The \'retry_callback\' option\'s callable must return an integer;  %s given', $type));
+            return new \InvalidArgumentException(sprintf('The \'max_retries\' option\'s callable must return an integer;  %s given', $type));
         }
-        if ($option < 1) {
-            return new \OutOfRangeException(sprintf('The \'retry_callback\' option\'s callable must be >= 0; %s given', $option));
+        if ($option < 0) {
+            return new \OutOfRangeException(sprintf('The \'max_retries\' option\'s callable must be >= 0; %s given', $option));
         }
 
         return $option;

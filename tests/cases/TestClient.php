@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace MensBeam\HTTP\Test;
 use GuzzleHttp\{
     Exception\ClientException,
+    Exception\ConnectException,
     Exception\RequestException,
     Handler\MockHandler,
     Middleware,
@@ -32,8 +33,6 @@ use Psr\Http\Message\{
 
 
 #[CoversClass('MensBeam\HTTP\Client')]
-#[CoversClass('MensBeam\HTTP\Client\RetryAware')]
-#[CoversClass('MensBeam\HTTP\Client\RetryMiddleware')]
 class TestClient extends TestCase {
     public function testConstructor(): void {
         $logger = Phake::mock(LoggerInterface::class);
@@ -72,11 +71,13 @@ class TestClient extends TestCase {
         $logger = Phake::mock(LoggerInterface::class);
 
         $retryCallback = function (
-            int $retries,
-            RequestInterface $request,
-            ?ResponseInterface $response = null,
-            ?RequestException $exception = null,
-            ?int &$dynamicDelay = null
+            int $retryAttempt,
+            string $method,
+            string|UriInterface $uri,
+            array $options,
+            int $delay,
+            ResponseInterface $response,
+            ConnectException|RequestException|null $exception
         ): int {
             return Client::REQUEST_CONTINUE;
         };
@@ -195,15 +196,29 @@ class TestClient extends TestCase {
         ]);
     }
 
+    public function testRequestRetry_maxRetries_none(): void {
+        $this->expectException(ClientException::class);
+
+        $client = new Client();
+        $client->request('GET', 'https://ook.com', [
+            'dry_run' => [
+                new Response(418)
+            ],
+            'max_retries' => 0
+        ]);
+    }
+
     public function testRequestRetry_retryCallbackFail(): void {
         $this->expectException(ClientException::class);
 
         $retryCallback = function (
-            int $retries,
-            RequestInterface $request,
-            ?ResponseInterface $response = null,
-            ?RequestException $exception = null,
-            ?int &$dynamicDelay = null
+            int $retryAttempt,
+            string $method,
+            string|UriInterface $uri,
+            array $options,
+            int $delay,
+            ResponseInterface $response,
+            ConnectException|RequestException|null $exception
         ): int {
             if ($response->getStatusCode() === 418) {
                 return Client::REQUEST_STOP;
@@ -223,20 +238,26 @@ class TestClient extends TestCase {
 
     public function testRequestRetry_retryCallbackRetry(): void {
         $retryURI = null;
+        $count = 0;
         $retryCallback = function (
-            int $retries,
-            RequestInterface &$request,
-            ?ResponseInterface $response = null,
-            ?RequestException $exception = null,
-            ?int $dynamicDelay = null
-        ) use (&$retryURI): int {
+            int $retryAttempt,
+            string $method,
+            string|UriInterface &$uri,
+            array $options,
+            int $delay,
+            ResponseInterface $response,
+            ConnectException|RequestException|null $exception
+        ) use (&$count, &$retryURI): int {
             $code = $response->getStatusCode();
             if ($code === 400) {
-                $request = $request->withUri(new Uri('https://eek.com'));
+                $uri = 'https://eek.com';
                 return Client::REQUEST_RETRY;
             }
             if ($code === 200) {
-                $retryURI = (string)$request->getUri();
+                $retryURI = (string)$uri;
+                if ($count++ === 0) {
+                    return Client::REQUEST_RETRY;
+                }
             }
 
             return Client::REQUEST_CONTINUE;
@@ -246,6 +267,8 @@ class TestClient extends TestCase {
         $response = $client->request('GET', 'https://ook.com', [
             'dry_run' => [
                 new Response(400),
+                new Response(200),
+                new Response(400),
                 new Response(200)
             ],
             'retry_callback' => $retryCallback
@@ -254,6 +277,7 @@ class TestClient extends TestCase {
         $this->assertInstanceOf(ResponseInterface::class, $response);
         $this->assertEquals(200, $response->getStatusCode());
         $this->assertSame('https://eek.com', $retryURI);
+        $this->assertEquals(2, $count);
     }
 
     public function testRequestRetry_retryAfter(): void {
@@ -400,7 +424,6 @@ class TestClient extends TestCase {
                     new Client([ 'max_retries' => -1 ]);
                 }
             ],
-
             // Invalid middleware type, scalar
             [
                 \InvalidArgumentException::class,
@@ -616,17 +639,22 @@ class TestClient extends TestCase {
                 \InvalidArgumentException::class,
                 function (): void {
                     $retryCallback = function (
-                        int $retries,
-                        RequestInterface $request,
-                        ?ResponseInterface $response = null,
-                        ?RequestException $exception = null,
-                        ?int &$dynamicDelay = null
+                        int $retryAttempt,
+                        string $method,
+                        string|UriInterface $uri,
+                        array $options,
+                        int $delay,
+                        ResponseInterface $response,
+                        ConnectException|RequestException|null $exception
                     ) {
                         return 'ook';
                     };
 
                     $t = new Client();
-                    $t->request('GET', 'https://ook.com', [ 'retry_callback' => $retryCallback ]);
+                    $t->request('GET', 'https://ook.com', [
+                        'dry_run' => new Response(200),
+                        'retry_callback' => $retryCallback
+                    ]);
                 }
             ],
             // Invalid retry_callback return value, string
@@ -634,17 +662,22 @@ class TestClient extends TestCase {
                 \OutOfRangeException::class,
                 function (): void {
                     $retryCallback = function (
-                        int $retries,
-                        RequestInterface $request,
-                        ?ResponseInterface $response = null,
-                        ?RequestException $exception = null,
-                        ?int &$dynamicDelay = null
+                        int $retryAttempt,
+                        string $method,
+                        string|UriInterface &$uri,
+                        array $options,
+                        int $delay,
+                        ResponseInterface $response,
+                        ConnectException|RequestException|null $exception
                     ): int {
                         return 42;
                     };
 
                     $t = new Client();
-                    $t->request('GET', 'https://ook.com', [ 'retry_callback' => $retryCallback ]);
+                    $t->request('GET', 'https://ook.com', [
+                        'dry_run' => new Response(200),
+                        'retry_callback' => $retryCallback
+                    ]);
                 }
             ],
             // Invalid base_uri type, scalar
