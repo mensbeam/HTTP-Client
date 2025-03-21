@@ -2,7 +2,7 @@
     "name": "mensbeam/http-client",
     "type": "library",
     "license": "MIT",
-    "version": "1.5.0",
+    "version": "2.0.0",
     "authors": [
         {
             "name": "Dustin Wilson",

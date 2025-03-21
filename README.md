@@ -4,11 +4,12 @@
 [b]: https://docs.guzzlephp.org/en/stable/request-options.html
 [c]: https://github.com/guzzle/guzzle/issues/1722
 [d]: https://www.php-fig.org/psr/psr-18/
+[e]: https://www.php-fig.org/psr/psr-7/
 
 ## Overview
-_HTTP-Client_ is a [PSR-18][d]-compatible and `\GuzzleHttp\ClientInterface`-compatible wrapper around Guzzle's `\GuzzleHttp\Client`, providing enhanced default settings with customizable retry logic. It ensures that cURL is used for all requests and offers built-in error-handling mechanisms to improve debugging and resilience.
+_HTTP-Client_ is a [PSR-18][d]-compatible wrapper around Guzzle's `\GuzzleHttp\Client`, providing enhanced default settings with customizable retry logic. It ensures that cURL is used for all requests and offers built-in error-handling mechanisms to improve debugging and resilience.
 
-Guzzle's built-in retry mechanism is powerful but often overly complex. In practical scenarios, retrying requests is a common need and shouldn't require excessive boilerplate. This class aims to rectify that.
+Guzzle's built-in retry mechanism requires a lot of boilerplate code and is difficult to use in real-world scenarios. It also has a major limitation: you can't modify a request before retrying. This becomes a problem when a token expires, and you need to update an Authentication header or a form parameter with a new token. One of Guzzle’s key benefits is its ability to automatically create request bodies based on request options, like JSON encoding or assembling form parameters from an array. However, its built-in retry middleware does not support this feature. In version 1.5, this library introduced a custom retry middleware to overcome these issues. But in practice, it was still impractical — especially when modifying headers. The only way to do so was by creating a new [PSR-7][e] request object, which added complexity. Starting with version 2.0, _HTTP-Client_ simplifies this process. The retry callback now receives the method, URI, and request options directly. This makes modifying the request before retrying much easier.
 
 ## Features
 - **Enforced cURL Usage**: cURL is the industry-standard tool for HTTP requests. Consistently using cURL simplifies debugging by providing well-documented error messages and avoids unnecessary complexity caused by switching between different request methods in pursuit of negligible performance optimizations
@@ -25,7 +26,7 @@ composer require mensbeam/http-client
 
 ## Class Synopsis
 
-**Note**: This does not document the async methods (`Client::requestAsync` and `Client::sendAsync`). While Guzzle internally relies on promises, they introduce unnecessary complexity without providing any real multitasking capabilities. Since PHP only introduced cooperative multitasking with Fibers in PHP 8.1 — and Guzzle does not utilize them — its promise-based implementation offers no actual performance benefits. Instead, it adds misleading abstraction without true async behavior. We have implemented these methods to maintain compatibility with `\GuzzleHttp\ClientInterface` so this class may be used in place of `\GuzzleHttp\Client` in Guzzle's other classes if need arises, but we do not support them and suggest not using them.
+**Note**: This class does not have the async methods (`Client::requestAsync` and `Client::sendAsync`) from Guzzle. While Guzzle internally relies on promises, they introduce unnecessary complexity without providing any real multitasking capabilities. Since PHP only introduced cooperative multitasking with Fibers in PHP 8.1 — and Guzzle does not utilize them — its promise-based implementation offers no actual performance benefits. Instead, it adds misleading abstraction without true async behavior.
 
 ```php
 namespace MensBeam\HTTP;
@@ -93,13 +94,15 @@ echo (string)$response->getBody();
 use MensBeam\HTTP\Client;
 
 $callback = function (
-    int $retries,
-    RequestInterface $request,
+    int $retryAttempt,
+    string $method,
+    string|UriInterface $uri,
+    array $options,
+    int $delay,
     ?ResponseInterface $response = null,
-    ?RequestException $exception = null,
-    ?int $dynamicDelay = null
+    ConnectException|RequestException|null $exception = null
 ): int {
-    if ($response && $response->getStatusCode() === 400) {
+    if ($response?->getStatusCode() === 400) {
         return Client::REQUEST_RETRY;
     }
     return Client::REQUEST_CONTINUE;
@@ -110,19 +113,19 @@ $client = new Client('GET', 'https://ook.com', [ 'retry_callback' => $callback ]
 
 ### Custom Retry Logic with Modified Request
 ```php
-use MensBeam\HTTP\Client,
-    GuzzleHttp\Psr7\Request,
-    GuzzleHttp\Psr7\Uri;
+use MensBeam\HTTP\Client;
 
 $callback = function (
-    int $retries,
-    RequestInterface &$request,
+    int $retryAttempt,
+    string $method,
+    string|UriInterface &$uri,
+    array $options,
+    int $delay,
     ?ResponseInterface $response = null,
-    ?RequestException $exception = null,
-    ?int $dynamicDelay = null
+    ConnectException|RequestException|null $exception = null
 ): int {
-    if ($response && $response->getStatusCode() === 400) {
-        $request = $request->withUri(new Uri('https://eek.com'))
+    if ($response?->getStatusCode() === 400) {
+        $uri = 'https://eek.com';
         return Client::REQUEST_RETRY;
     }
     return Client::REQUEST_CONTINUE;
@@ -155,11 +158,13 @@ $client = new Client([
         new Response(200, [], 'Mock response data')
     ],
     'retry_callback' => function (
-        int $retries,
-        RequestInterface $request,
+        int $retryAttempt,
+        string $method,
+        string|UriInterface $uri,
+        array $options,
+        int $delay,
         ?ResponseInterface $response = null,
-        ?RequestException $exception = null,
-        ?int $dynamicDelay = null
+        ConnectException|RequestException|null $exception = null
     ): int {
         $code = $response?->getStatusCode();
 
