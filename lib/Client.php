@@ -163,7 +163,7 @@ class Client implements ClientInterface {
         if ($maxRetries instanceof \Throwable) {
             throw $maxRetries;
         }
-        $this->maxRetries = $maxRetries;
+        $this->maxRetries = $maxRetries ?? 10;
         unset($config['max_retries']);
 
         $middleware = $this->validateMiddlewareOption($config['middleware'] ?? null, $handler);
@@ -292,7 +292,6 @@ class Client implements ClientInterface {
         if ($maxRetries instanceof \Throwable) {
             return $maxRetries;
         }
-        $options['max_retries'] = $maxRetries ?? 10;
 
         $middleware = $this->validateMiddlewareOption($options['middleware'] ?? null, $handler);
         if ($middleware instanceof \Throwable) {
@@ -338,8 +337,10 @@ class Client implements ClientInterface {
             throw $client;
         }
 
+        $maxRetries = $options['max_retries'] ?? $this->maxRetries ?? null;
+
         // So the callback itself cannot be modified by the callback
-        $retryCallback = $options['retry_callback'] ?? null;
+        $retryCallback = $options['retry_callback'] ?? $this->retryCallback ?? null;
         unset($options['retry_callback']);
 
         $delay = $retryAttempt = 0;
@@ -355,24 +356,26 @@ class Client implements ClientInterface {
                 unset($o['logger']);
                 unset($o['max_retries']);
                 $response = $client->request($method, $uri, $o);
-                if ($options['max_retries'] > 0 && ++$retryAttempt <= $options['max_retries']) {
+                if ($maxRetries > 0 && ++$retryAttempt <= $maxRetries) {
                     $delay = 1000 * 2 ** ($retryAttempt - 1);
-                    if ($this->retry($retryAttempt, $method, $uri, $options, $delay, $response, null, $retryCallback) === self::REQUEST_RETRY) {
+                    $status = $this->retry($retryAttempt, $method, $uri, $options, $delay, $response, null, $retryCallback);
+                    if ($status === self::REQUEST_RETRY) {
                         usleep($delay * 1000);
                         continue;
                     }
                 }
             } catch (ConnectException|RequestException $exception) {
-                if ($options['max_retries'] === 0) {
+                if ($maxRetries === 0) {
                     throw $exception;
                 }
 
                 $response = ($exception instanceof RequestException && $exception->hasResponse()) ? $exception->getResponse() : null;
 
-                if (++$retryAttempt <= $options['max_retries']) {
+                if (++$retryAttempt <= $maxRetries) {
                     $delay = 1000 * 2 ** ($retryAttempt - 1);
 
-                    switch ($this->retry($retryAttempt, $method, $uri, $options, $delay, $response, $exception, $retryCallback)) {
+                    $status = $this->retry($retryAttempt, $method, $uri, $options, $delay, $response, $exception, $retryCallback);
+                    switch ($status) {
                         case self::REQUEST_RETRY:
                             usleep($delay * 1000);
                         continue 2;
