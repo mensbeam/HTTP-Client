@@ -33,8 +33,9 @@ namespace MensBeam\HTTP;
 
 class Client {
     public const REQUEST_STOP = 0;
-    public const REQUEST_RETRY = 1;
-    public const REQUEST_CONTINUE = 2;
+    public const REQUEST_FAIL = 1;
+    public const REQUEST_RETRY = 2;
+    public const REQUEST_CONTINUE = 3;
 
     public function __construct(array $config = []);
 
