@@ -65,19 +65,25 @@ use Psr\Log\LoggerInterface;
 class Client implements ClientInterface {
     /**
      * @var int Used in retry callables to tell the retry handler to not retry the
-     * request
+     * request and return the response as is
      */
     public const REQUEST_STOP = 0;
+    /**
+     * @var int Used in retry callables to tell the retry handler to not retry the
+     * request but throw if an exception occurred; behaves identically to
+     * REQUEST_STOP if there isn't an exception
+     */
+    public const REQUEST_FAIL = 1;
     /**
      * @var int Used in retry callables to tell the retry handler to retry the
      * request
      */
-    public const REQUEST_RETRY = 1;
+    public const REQUEST_RETRY = 2;
     /**
      * @var int Used in retry callables to tell the retry handler to continue onto
      * its own logic
      */
-    public const REQUEST_CONTINUE = 2;
+    public const REQUEST_CONTINUE = 3;
 
     /** @var array Configuration array */
     protected array $config = [];
@@ -150,7 +156,7 @@ class Client implements ClientInterface {
         if ($logger instanceof \Throwable) {
             throw $logger;
         }
-        $logger = $logger;
+        $this->logger = $logger;
         unset($config['logger']);
 
         $maxRetries = $this->validateMaxRetriesOption($config['max_retries'] ?? null);
@@ -349,9 +355,10 @@ class Client implements ClientInterface {
                 unset($o['logger']);
                 unset($o['max_retries']);
                 $response = $client->request($method, $uri, $o);
-                if ($options['max_retries'] > 0) {
-                    if ($this->shouldRetry($retryAttempt, $method, $uri, $options, $delay, $response, null, $retryCallback)) {
-                        usleep($delay * 1000); // @codeCoverageIgnore
+                if ($options['max_retries'] > 0 && ++$retryAttempt <= $options['max_retries']) {
+                    $delay = 1000 * 2 ** ($retryAttempt - 1);
+                    if ($this->retry($retryAttempt, $method, $uri, $options, $delay, $response, null, $retryCallback) === self::REQUEST_RETRY) {
+                        usleep($delay * 1000);
                         continue;
                     }
                 }
@@ -365,9 +372,12 @@ class Client implements ClientInterface {
                 if (++$retryAttempt <= $options['max_retries']) {
                     $delay = 1000 * 2 ** ($retryAttempt - 1);
 
-                    if ($this->shouldRetry($retryAttempt, $method, $uri, $options, $delay, $response, $exception, $retryCallback)) {
-                        usleep($delay * 1000);
-                        continue;
+                    switch ($this->retry($retryAttempt, $method, $uri, $options, $delay, $response, $exception, $retryCallback)) {
+                        case self::REQUEST_RETRY:
+                            usleep($delay * 1000);
+                        continue 2;
+                        case self::REQUEST_STOP:
+                        return $response;
                     }
                 }
 
@@ -380,28 +390,31 @@ class Client implements ClientInterface {
         return $response;
     }
 
-    protected function shouldRetry(int &$retryAttempt, string &$method, string|UriInterface &$uri, array &$options, int &$delay, ?ResponseInterface $response = null, ConnectException|RequestException|null $exception = null, ?callable $retryCallback = null): bool {
+    protected function retry(int &$retryAttempt, string &$method, string|UriInterface &$uri, array &$options, int &$delay, ?ResponseInterface $response = null, ConnectException|RequestException|null $exception = null, ?callable $retryCallback = null): int {
         if ($retryCallback !== null) {
             $result = ($retryCallback)($retryAttempt, $method, $uri, $options, $delay, $response, $exception);
 
             if (!is_integer($result)) {
                 throw new \InvalidArgumentException(sprintf('The \'retry_callback\' option\'s callable must return an integer; %s given', $result));
             }
-            if ($result < 0 || $result > 2) {
-                throw new \OutOfRangeException(sprintf('The \'retry_callback\' option\'s callable must return an integer between 0 and 2; %s given', $result));
-            }
 
-            if ($result === self::REQUEST_RETRY) {
-                return true;
-            }
-            if ($result === self::REQUEST_STOP) {
-                return false;
+            switch ($result) {
+                case self::REQUEST_CONTINUE:
+                break;
+                case self::REQUEST_FAIL:
+                    if ($exception !== null) {
+                        throw $exception;
+                    }
+                case self::REQUEST_RETRY:
+                case self::REQUEST_STOP:
+                return $result;
+                default: throw new \OutOfRangeException(sprintf('The \'retry_callback\' option\'s callable must return an integer between 0 and 3; %s given', $result));
             }
         }
 
         // Not sure if this can happen, but here it is just in case.
         if ($response === null && $exception === null) {
-            return false; // @codeCoverageIgnore
+            return self::REQUEST_FAIL; // @codeCoverageIgnore
         }
 
         $logger = $options['logger'] ?? null;
@@ -411,13 +424,13 @@ class Client implements ClientInterface {
             case 400:
             case 404:
             case 410:
-            return false;
+            return self::REQUEST_FAIL;
             case 429:
             case 503:
                 // If there isn't a Retry-After header then sleep exponentially.
                 if (!$response->hasHeader('Retry-After')) {
                     $logger?->debug(sprintf('%s error, retrying after %s', $code, ($delay / 1000) . 's'));
-                    return true;
+                    return self::REQUEST_RETRY;
                 }
 
                 // The Retry-After header is either supposed to have an HTTP date format or a
@@ -443,10 +456,10 @@ class Client implements ClientInterface {
                     $logger?->debug(sprintf('%s error, retrying after %s', $code, "{$retryAfter}s"));
                     $delay = $retryAfter;
                 }
-            return true;
+            return self::REQUEST_RETRY;
             default:
                 if ($exception === null && $code < 400) {
-                    return false;
+                    return self::REQUEST_FAIL;
                 }
 
                 // Check for cURL errors in the exception and retry if so
@@ -456,13 +469,13 @@ class Client implements ClientInterface {
                     $curlErrno = $exception->getHandlerContext()['errno'] ?? null;
                     if ($curlErrno !== null) {
                         $logger?->debug(sprintf('%s error (cURL error %s), retrying after %s',  $code, $curlErrno, ($delay / 1000) . 's'));
-                        return true;
+                        return self::REQUEST_RETRY;
                     }
                 }
                 // @codeCoverageIgnoreEnd
 
                 $logger?->debug(sprintf('%s error, retrying after %s', $code, ($delay / 1000) . 's'));
-                return true;
+                return self::REQUEST_RETRY;
         }
     }
 

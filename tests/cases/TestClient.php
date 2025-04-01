@@ -221,7 +221,7 @@ class TestClient extends TestCase {
             ConnectException|RequestException|null $exception
         ): int {
             if ($response->getStatusCode() === 418) {
-                return Client::REQUEST_STOP;
+                return Client::REQUEST_FAIL;
             }
 
             return Client::REQUEST_CONTINUE;
@@ -234,50 +234,6 @@ class TestClient extends TestCase {
             ],
             'retry_callback' => $retryCallback
         ]);
-    }
-
-    public function testRequestRetry_retryCallbackRetry(): void {
-        $retryURI = null;
-        $count = 0;
-        $retryCallback = function (
-            int $retryAttempt,
-            string $method,
-            string|UriInterface &$uri,
-            array $options,
-            int $delay,
-            ResponseInterface $response,
-            ConnectException|RequestException|null $exception
-        ) use (&$count, &$retryURI): int {
-            $code = $response->getStatusCode();
-            if ($code === 400) {
-                $uri = 'https://eek.com';
-                return Client::REQUEST_RETRY;
-            }
-            if ($code === 200) {
-                $retryURI = (string)$uri;
-                if ($count++ === 0) {
-                    return Client::REQUEST_RETRY;
-                }
-            }
-
-            return Client::REQUEST_CONTINUE;
-        };
-
-        $client = new Client();
-        $response = $client->request('GET', 'https://ook.com', [
-            'dry_run' => [
-                new Response(400),
-                new Response(200),
-                new Response(400),
-                new Response(200)
-            ],
-            'retry_callback' => $retryCallback
-        ]);
-
-        $this->assertInstanceOf(ResponseInterface::class, $response);
-        $this->assertEquals(200, $response->getStatusCode());
-        $this->assertSame('https://eek.com', $retryURI);
-        $this->assertEquals(2, $count);
     }
 
     public function testRequestRetry_retryAfter(): void {
@@ -330,6 +286,80 @@ class TestClient extends TestCase {
         $this->assertGreaterThanOrEqual(2, microtime(true) - $startTime);
         $this->assertInstanceOf(ResponseInterface::class, $response);
         $this->assertEquals(200, $response->getStatusCode());
+    }
+
+    public function testRequestRetry_retryCallbackRetry(): void {
+        $retryURI = null;
+        $count = 0;
+        $retryCallback = function (
+            int $retryAttempt,
+            string $method,
+            string|UriInterface &$uri,
+            array $options,
+            int $delay,
+            ResponseInterface $response,
+            ConnectException|RequestException|null $exception
+        ) use (&$count, &$retryURI): int {
+            $code = $response->getStatusCode();
+            if ($code === 400) {
+                $uri = 'https://eek.com';
+                return Client::REQUEST_RETRY;
+            }
+            if ($code === 200) {
+                $retryURI = (string)$uri;
+                if ($count++ === 0) {
+                    return Client::REQUEST_RETRY;
+                }
+            }
+
+            return Client::REQUEST_CONTINUE;
+        };
+
+        $client = new Client();
+        $response = $client->request('GET', 'https://ook.com', [
+            'dry_run' => [
+                new Response(400),
+                new Response(200),
+                new Response(400),
+                new Response(200)
+            ],
+            'retry_callback' => $retryCallback
+        ]);
+
+        $this->assertInstanceOf(ResponseInterface::class, $response);
+        $this->assertEquals(200, $response->getStatusCode());
+        $this->assertSame('https://eek.com', $retryURI);
+        $this->assertEquals(2, $count);
+    }
+
+    public function testRequestRetry_retryCallbackStop(): void {
+        $retryCallback = function (
+            int $retryAttempt,
+            string $method,
+            string|UriInterface &$uri,
+            array $options,
+            int $delay,
+            ResponseInterface $response,
+            ConnectException|RequestException|null $exception
+        ): int {
+            $code = $response->getStatusCode();
+            if ($code === 400) {
+                return Client::REQUEST_STOP;
+            }
+
+            return Client::REQUEST_CONTINUE;
+        };
+
+        $client = new Client();
+        $response = $client->request('GET', 'https://ook.com', [
+            'dry_run' => [
+                new Response(400)
+            ],
+            'retry_callback' => $retryCallback
+        ]);
+
+        $this->assertInstanceOf(ResponseInterface::class, $response);
+        $this->assertEquals(400, $response->getStatusCode());
     }
 
     #[DataProvider('provideFatalErrors')]
